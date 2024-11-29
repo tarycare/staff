@@ -89,7 +89,7 @@ class DEPARTMENT_Create_Admin_Page
     {
         echo '<div class="wrap">
 
-    <div id="wp-react-app2"></div>
+    <div id="deparment-react-app"></div>
 </div>';
     }
 }

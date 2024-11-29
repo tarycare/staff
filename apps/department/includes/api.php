@@ -1,360 +1,322 @@
 <?php
 
-class WP_React_Settings_Rest_Route_DEP
+class WP_React_Department_Rest_Route
 {
     public function __construct()
     {
-        add_action('rest_api_init', [$this, 'create_rest_routes']);
-        if (defined('WP_ENV') && WP_ENV === 'development') {
+        add_action('init', [$this, 'register_department_post_type']); // Register custom post type
+        add_action('rest_api_init', [$this, 'create_rest_routes']); // Create REST routes
 
-            add_action('rest_api_init', [$this, 'add_cors_headers']); // Add this line
+        if (defined('WP_ENV') && WP_ENV === 'development') {
+            add_action('rest_api_init', [$this, 'add_cors_headers']); // Add CORS headers in dev
         }
+
         add_action('wp_enqueue_scripts', [$this, 'enqueue_scripts']); // Enqueue scripts
     }
-    // Add this new function to handle CORS headers
+
+    // Function to register the Department custom post type
+    public function register_department_post_type()
+    {
+        $labels = array(
+            'name'               => 'Departments',
+            'singular_name'      => 'Department',
+            'menu_name'          => 'Departments',
+            'add_new'            => 'Add New',
+            'add_new_item'       => 'Add New Department',
+            'edit_item'          => 'Edit Department',
+            'new_item'           => 'New Department',
+            'view_item'          => 'View Department',
+            'all_items'          => 'All Departments',
+            'search_items'       => 'Search Departments',
+            'not_found'          => 'No departments found',
+            'not_found_in_trash' => 'No departments found in trash'
+        );
+
+        $args = array(
+            'labels'              => $labels,
+            'public'              => true,
+            'has_archive'         => true,
+            'rewrite'             => array('slug' => 'departments'),
+            'supports'            => array('title', 'editor', 'thumbnail'),
+            'show_in_rest'        => true, // Enable REST API support
+            'rest_base'           => 'departments',
+        );
+
+        register_post_type('department', $args);
+    }
+
+    // Add CORS headers in development mode
     public function add_cors_headers()
     {
-        // Remove the default CORS headers
         remove_filter('rest_pre_serve_request', 'rest_send_cors_headers');
-
-        // Add custom CORS headers
         add_filter('rest_pre_serve_request', function ($value) {
-            // Allow requests from localhost:4000 during development
             header('Access-Control-Allow-Origin: http://localhost:4000');
             header('Access-Control-Allow-Methods: GET, POST, OPTIONS, PUT, DELETE');
             header('Access-Control-Allow-Credentials: true');
             header('Access-Control-Allow-Headers: Authorization, X-WP-Nonce, Content-Type, Accept, Origin, X-Requested-With');
-
             return $value;
         });
     }
 
-
-    // Enqueue and localize the script with nonce
+    // Enqueue scripts
     public function enqueue_scripts()
     {
         wp_enqueue_script(
-            'my-staff-script',  // Unique handle for the script
-            get_template_directory_uri() . 'dist/plugin2.js',  // URL to the script
-            array('jquery'),  // Optional dependencies
-            null,  // No version
-            true   // Load in footer
+            'my-department-script',
+            get_template_directory_uri() . '/dist/department.js',
+            array('jquery'),
+            null,
+            true
         );
 
-        // Localize script to pass nonce and REST API root URL
-        wp_localize_script('my-staff-script', 'myApiSettings', array(
-            'root' => esc_url_raw(rest_url()),  // REST API base URL
-            'nonce' => wp_create_nonce('wp_rest')  // Security nonce
+        wp_localize_script('my-department-script', 'myApiSettings', array(
+            'root' => esc_url_raw(rest_url()),
+            'nonce' => wp_create_nonce('wp_rest')
         ));
     }
 
-
-
+    // Create REST routes for CRUD operations on Department
     public function create_rest_routes()
     {
-
-
-        // Route for adding a user
         register_rest_route('department/v1', '/add', [
             'methods' => 'POST',
-            'callback' => [$this, 'add_staff'],
+            'callback' => [$this, 'add_department'],
             'permission_callback' => function () {
-                if (defined('WP_ENV') && WP_ENV === 'development') {
-                    return '__return_true';
-                } else {
-                    return current_user_can('create_users') || current_user_can('edit_users');
+                return current_user_can('edit_posts');
+            }
+        ]);
+
+        register_rest_route('department/v1', '/all', [
+            'methods' => 'GET',
+            'callback' => [$this, 'get_all_departments'],
+            'permission_callback' => '__return_true'
+        ]);
+
+        // Add a dynamic route to for sletect all
+        register_rest_route('department/v1', '/select', [
+            'methods' => 'GET',
+            'callback' => [$this, 'get_select_departments'],
+            'permission_callback' => '__return_true'
+        ]);
+
+        register_rest_route('department/v1', '/get/(?P<id>\d+)', [
+            'methods' => 'GET',
+            'callback' => [$this, 'get_department_by_id'],
+            'permission_callback' => '__return_true'
+        ]);
+
+        register_rest_route('department/v1', '/update/(?P<id>\d+)', [
+            'methods' => 'POST',
+            'callback' => [$this, 'update_department'],
+            'permission_callback' => function () {
+                return current_user_can('edit_posts');
+            }
+        ]);
+
+        register_rest_route('department/v1', '/delete/(?P<id>\d+)', [
+            'methods' => 'DELETE',
+            'callback' => [$this, 'delete_department'],
+            'permission_callback' => function () {
+                return current_user_can('delete_posts');
+            }
+        ]);
+    }
+
+    // Function to add a department
+    public function add_department($request)
+    {
+        $parameters = $request->get_params();
+
+        $title = sanitize_text_field($parameters['title']);
+        $content = sanitize_textarea_field($parameters['content']);
+
+        if (empty($title)) {
+            return new WP_Error('missing_fields', 'Missing title', array('status' => 400));
+        }
+
+        $post_id = wp_insert_post([
+            'post_title'   => $title,
+            'post_content' => $content,
+            'post_status'  => 'publish',
+            'post_type'    => 'department'
+        ]);
+
+        // insert post meta
+        foreach ($parameters as $key => $value) {
+            $meta_key = sanitize_key($key);
+            $meta_value = is_array($value) ? $value : maybe_serialize($value);
+
+            update_post_meta($post_id, $meta_key, $meta_value);
+        }
+
+
+        if (is_wp_error($post_id)) {
+            return new WP_Error('department_creation_failed', $post_id->get_error_message(), array('status' => 500));
+        }
+
+        return rest_ensure_response([
+            'success' => true,
+            'message' => 'Department created successfully',
+            'post_id' => $post_id,
+            'data'    => $parameters
+        ]);
+    }
+    // Function to get all departments
+    public function get_all_departments()
+    {
+        $args = [
+            'post_type'   => 'department',
+            'post_status' => 'publish',
+            'numberposts' => -1
+        ];
+
+        $departments = get_posts($args);
+        $data = [];
+
+        foreach ($departments as $department) {
+            // Get post meta data
+            $meta_data = get_post_meta($department->ID);
+            $flattened_meta = [];
+
+            if (!empty($meta_data) && is_array($meta_data)) {
+                foreach ($meta_data as $key => $value) {
+                    $flattened_meta[$key] = is_array($value) && isset($value[0]) ? $value[0] : $value;
+                    // Unserialize if the value is serialized
+                    $flattened_meta[$key] = maybe_unserialize($flattened_meta[$key]);
                 }
             }
 
-        ]);
+            // Merge the flattened meta data with the main data array
+            $data[] = array_merge(
+                [
+                    // convert id to number
+                    'id'      => (string) $department->ID,
+                    'title'   => $department->post_title,
+                    'content' => $department->post_content,
+                ],
+                $flattened_meta
+            );
+        }
 
-        // Route for fetching all users
-        register_rest_route('department/v1', '/all', [
-            'methods' => 'GET',
-            'callback' => [$this, 'get_all_users'],
-            'permission_callback' => '__return_true'
-        ]);
-
-        // Route for fetching a specific user by ID
-        register_rest_route('department/v1', '/users/(?P<id>\d+)', [
-            'methods' => 'GET',
-            'callback' => [$this, 'get_user_by_id'],
-            'permission_callback' => '__return_true'
-        ]);
-
-        // Route for deleting a user
-        register_rest_route('department/v1', '/delete/(?P<id>\d+)', [
-            'methods' => 'DELETE',
-            'callback' => [$this, 'delete_staff'],
-            'permission_callback' => function () {
-                return current_user_can('create_users') || current_user_can('edit_users');
-            }
-        ]);
-
-        // Route for updating a user
-        register_rest_route('department/v1', '/update/(?P<id>\d+)', [
-            'methods' => 'PATCH',
-            'callback' => [$this, 'update_staff'],
-            'permission_callback' => function () {
-                return current_user_can('create_users') || current_user_can('edit_users');
-            }
-        ]);
+        return rest_ensure_response($data);
     }
 
-
-    // Function to add a user
-    public function add_staff($request)
-    {
-        // Get all JSON parameters
-        $parameters = $request->get_json_params();
-        error_log('Parameters: ' . print_r($parameters, true)); // Log the parameters
-
-        // Handle the required fields (email)
-        $email = sanitize_email($parameters['staff_email']);
-
-        // Check for missing required fields
-        if (empty($email)) {
-            return new WP_Error('missing_fields', 'Missing email field', array('status' => 400));
-        }
-
-        // Check if the email already exists before attempting to create the user
-        if (email_exists($email)) {
-            return new WP_Error('user_exists', 'User already exists with this email', array('status' => 400));
-        }
-
-        // Generate a username and password for the user
-        $username = sanitize_text_field($parameters['staff_email']); // Placeholder or generated username
-        $password = wp_generate_password(); // Generate a random password
-
-        // Multisite-specific user creation
-        if (is_multisite()) {
-            $user_id = wpmu_create_user($username, $password, $email);
-            if (!$user_id) {
-                return new WP_Error('user_creation_failed', 'Failed to create user', array('status' => 500));
-            }
-            add_user_to_blog(get_current_blog_id(), $user_id, 'subscriber');
-        } else {
-            // Single-site user creation
-            $user_id = wp_create_user($username, $password, $email);
-            if (is_wp_error($user_id)) {
-                return new WP_Error('user_creation_failed', $user_id->get_error_message(), array('status' => 500));
-            }
-        }
-
-        // Set the user role (subscriber by default)
-        wp_update_user([
-            'ID' => $user_id,
-            'role' => 'subscriber'
-        ]);
-
-        // Remove the used parameters (in this case, just email)
-        unset($parameters['staff_v1_Email']);
-
-        // Save additional custom fields as user meta
-        foreach ($parameters as $key => $value) {
-            $meta_key = sanitize_key($key);
-            $meta_value = maybe_serialize($value); // Handle arrays or complex values
-            update_user_meta($user_id, $meta_key, $meta_value);
-        }
-
-        return rest_ensure_response([
-            'success' => true,
-            'message' => 'User created successfully',
-            'user_id' => $user_id,
-            'data' => $parameters
-        ], 201);
-    }
-
-
-
-
-    // Function to get all users
-    public function get_all_users()
+    public function get_select_departments()
     {
         $args = [
-            'role__in' => ['subscriber', 'editor', 'administrator'],
-            'orderby' => 'registered',
-            'order' => 'DESC'
+            'post_type'   => 'department',
+            'post_status' => 'publish',
+            'numberposts' => -1
         ];
 
-        $users = get_users($args);
-        $user_data = [];
+        $departments = get_posts($args);
+        $data = [];
 
-        foreach ($users as $user) {
-            // Check if the user has roles and if roles exist
-            $user_roles = !empty($user->roles) ? implode(', ', $user->roles) : 'No role assigned';
+        foreach ($departments as $department) {
+            $data[] = [
+                'value' => (string) $department->ID,
+                'label_en' => $department->post_title,
+                'label_ar' => $department->post_title,
 
-            $user_data[] = [
-                'id' => $user->ID,
-                'username' => $user->user_login,
-                'email' => $user->user_email,
-                'role' => $user_roles,
-                'registered' => $user->user_registered,
-                'meta' => get_user_meta($user->ID)
             ];
         }
 
-        return rest_ensure_response($user_data);
+        return rest_ensure_response($data);
     }
 
-    // Recursive unserialize function
-    function recursive_unserialize($data)
+
+    // Function to get a department by ID
+    public function get_department_by_id($request)
     {
-        // Ensure we are working with serialized data only
-        if (!is_serialized($data)) {
-            return $data;
+        $id = (int) $request['id'];
+        $department = get_post($id);
+
+        if (!$department || $department->post_type !== 'department') {
+            return new WP_Error('department_not_found', 'Department not found', array('status' => 404));
         }
 
-        // Keep unserializing until it's no longer serialized
-        $unserialized_data = maybe_unserialize($data);
-        while (is_serialized($unserialized_data)) {
-            $unserialized_data = maybe_unserialize($unserialized_data);
-        }
-
-        return $unserialized_data;
-    }
-
-    public function get_user_by_id($request)
-    {
-        $user_id = (int) $request->get_param('id');
-        $user = get_userdata($user_id);
-
-        if (!$user) {
-            return new WP_Error('user_not_found', 'User not found', array('status' => 404));
-        }
-
-        $user_data = [
-            'id' => $user->ID,
-            'username' => $user->user_login,
-            'email' => $user->user_email,
-            'registered' => $user->user_registered
+        $post_data = [
+            'id'      => $department->ID,
+            'title'   => $department->post_title,
+            'content' => $department->post_content,
         ];
-
-        // Append custom fields to the user data
-        $custom_fields = get_user_meta($user_id);
-        foreach ($custom_fields as $key => $value) {
+        // Append custom fields to the post data
+        $post_meta = get_post_meta($id);
+        foreach ($post_meta as $key => $value) {
             // Only unserialize if the data is serialized
-            if (is_serialized($value[0])) {
-                $user_data[$key] = $this->recursive_unserialize($value[0]); // Use $this->recursive_unserialize()
-            } else {
-                $user_data[$key] = $value[0]; // Not serialized, just use the value
-            }
+            $post_data[$key] = maybe_unserialize($value[0]);
         }
 
-        // remove  wp_capabilities with site id
-        $site_id = get_current_blog_id(); // Use the current site or pass the desired site ID
-        $capabilities_key = "wp_{$site_id}_capabilities";
-        $user_level_key = "wp_{$site_id}_user_level";
-
-        unset($user_data[$capabilities_key]);
-        unset($user_data[$user_level_key]);
-        // remove  wp_capabilities
-        unset($user_data['wp_capabilities']);
-        unset($user_data['wp_user_level']);
-
-
-        return rest_ensure_response($user_data);
+        return rest_ensure_response($post_data);
     }
 
-
-
-    // Function to delete a user
-    public function delete_staff($request)
+    // Function to update a department with meta keys
+    public function update_department($request)
     {
-        $user_id = (int) $request->get_param('id');
+        $id = (int) $request['id'];
+        $department = get_post($id);
 
-        if (!get_userdata($user_id)) {
-            return new WP_Error('user_not_found', 'User not found', array('status' => 404));
+        if (!$department || $department->post_type !== 'department') {
+            return new WP_Error('department_not_found', 'Department not found', array('status' => 404));
         }
 
-        require_once(ABSPATH . 'wp-admin/includes/user.php');
-        wp_delete_user($user_id);
+        $parameters = $request->get_params();
+        $title = sanitize_text_field($parameters['title']);
+        $content = sanitize_textarea_field($parameters['content']);
+
+        // Update post title and content
+        if (!empty($title)) {
+            wp_update_post([
+                'ID'         => $id,
+                'post_title' => $title,
+                'post_content' => $content
+            ]);
+        }
+
+        // Update meta fields (replace old ones with new ones)
+        foreach ($parameters as $key => $value) {
+            $meta_key = sanitize_key($key);
+            // dont serialize if the value is an array
+            $meta_value = is_array($value) ? $value : maybe_serialize($value);
+
+            update_post_meta($id, $meta_key, $meta_value);
+        }
 
         return rest_ensure_response([
             'success' => true,
-            'message' => 'User deleted successfully'
+            'message' => 'Department updated successfully',
+            'post_id' => $id,
+            'updated_data' => $parameters
         ]);
     }
 
-    // Function to update a user
-    public function update_staff($request)
+    // Function to delete a department and all related meta data
+    public function delete_department($request)
     {
-        $user_id = (int) $request->get_param('id');
+        $id = (int) $request['id'];
+        $department = get_post($id);
 
-        // Fetch the existing user data
-        $existing_user = get_userdata($user_id);
-
-        if (!$existing_user) {
-            error_log('User not found for ID: ' . $user_id);
-            return new WP_Error('user_not_found', 'User not found', array('status' => 404));
+        if (!$department || $department->post_type !== 'department') {
+            return new WP_Error('department_not_found', 'Department not found', array('status' => 404));
         }
 
-        // Prepare array for user fields update (non-meta fields)
-        $userdata = ['ID' => $user_id];
-
-        // Get the incoming data from the request
-        $new_display_name = sanitize_text_field($request->get_param('username'));
-        $new_email = sanitize_email($request->get_param('email'));
-        // $new_role = sanitize_text_field($request->get_param('role'));
-
-        // Log the incoming request data
-        error_log('Incoming data: ' . print_r($request->get_json_params(), true));
-
-        // Only update fields that are provided
-        if (!empty($new_display_name)) {
-            $userdata['display_name'] = $new_display_name;
-        }
-        if (!empty($new_email)) {
-            $userdata['user_email'] = $new_email;
+        // Delete all meta keys related to the department
+        $meta_keys = get_post_meta($id);
+        foreach ($meta_keys as $key => $value) {
+            delete_post_meta($id, $key);
         }
 
-
-
-        // Log the user data before updating
-        error_log('User data to be updated: ' . print_r($userdata, true));
-
-        // Update the user data
-        $updated = wp_update_user($userdata);
-        if (is_wp_error($updated)) {
-            error_log('Failed to update user: ' . print_r($updated->get_error_message(), true));
-            return new WP_Error('user_update_failed', 'Failed to update user', array('status' => 500));
-        }
-
-        error_log('User updated successfully: ID ' . $user_id);
-
-        // Handle additional custom fields (meta data)
-        $meta_fields = $request->get_json_params();
-        foreach ($meta_fields as $key => $value) {
-            // Skip predefined fields and critical meta fields
-            if (in_array($key, ['username', 'email', 'id', 'registered'])) {
-                continue;
-            }
-
-            // Skip updating meta if the value is empty
-            if (empty($value) && $value !== '0') {
-                error_log('Skipped updating empty meta field: ' . $key);
-                continue;
-            }
-
-            // Sanitize and update user meta
-            $meta_key = sanitize_key($key);
-            $meta_value = maybe_serialize($value);
-            update_user_meta($user_id, $meta_key, $meta_value);
-
-            // Log each meta key-value update
-            error_log('Meta field updated: ' . $meta_key . ' => ' . print_r($meta_value, true));
-        }
-
-        // Log the final response
-        error_log('User and meta data updated successfully for user ID: ' . $user_id);
+        // Delete the post
+        wp_delete_post($id, true);
 
         return rest_ensure_response([
             'success' => true,
-            'message' => 'User and meta data updated successfully',
-            'user_id' => $user_id,
-            'data' => $meta_fields // Return the updated meta data
+            'message' => 'Department and related meta deleted successfully'
         ]);
     }
 }
 
-new WP_React_Settings_Rest_Route_DEP();
+
+
+
+new WP_React_Department_Rest_Route();
